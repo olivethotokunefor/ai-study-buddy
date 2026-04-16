@@ -58,7 +58,6 @@ from langchain_core.output_parsers import StrOutputParser
 # Configuration
 # ========================
 
-PERSIST_DIR = "./chroma_db"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 GROQ_MODEL = "openai/gpt-oss-120b"
 
@@ -78,16 +77,6 @@ class StudyBuddyGroq:
         )
 
         self.vectorstore = None
-        
-        # Load existing vectorstore from persistence if available
-        if os.path.exists(PERSIST_DIR):
-            try:
-                self.vectorstore = Chroma(
-                    persist_directory=PERSIST_DIR,
-                    embedding_function=self.embeddings,
-                )
-            except:
-                self.vectorstore = None
 
     # ========================
     # Document Loading
@@ -115,29 +104,8 @@ class StudyBuddyGroq:
     # ========================
     def ingest_document(self, uploaded_file):
 
-        # Delete the old vectorstore collection if it exists
-        if self.vectorstore:
-            try:
-                # Delete all existing collections
-                self.vectorstore.delete_collection()
-            except:
-                pass
-            self.vectorstore = None
-
-        # Remove persistence directory to ensure fresh start
-        if os.path.exists(PERSIST_DIR):
-            import shutil
-            import time
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    shutil.rmtree(PERSIST_DIR)
-                    break
-                except PermissionError:
-                    if attempt < max_retries - 1:
-                        time.sleep(0.5)
-                    else:
-                        pass  # Continue even if deletion fails
+        # Reset vectorstore for fresh document
+        self.vectorstore = None
 
         with tempfile.NamedTemporaryFile(
             delete=False,
@@ -156,12 +124,12 @@ class StudyBuddyGroq:
 
         chunks = splitter.split_documents(documents)
 
-        # Create fresh vectorstore with new documents
-        self.vectorstore = Chroma.from_documents(
-            documents=chunks,
-            embedding=self.embeddings,
-            persist_directory=PERSIST_DIR,
+        # Create in-memory vectorstore with new documents
+        self.vectorstore = Chroma(
+            collection_name="study_buddy",
+            embedding_function=self.embeddings,
         )
+        self.vectorstore.add_documents(chunks)
 
         os.unlink(tmp_path)
 

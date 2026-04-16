@@ -5,7 +5,7 @@ langchain-core
 langchain-text-splitters
 langchain-huggingface
 langchain-groq
-chromadb
+chromadb==0.4.24
 sentence-transformers
 pypdf
 python-docx
