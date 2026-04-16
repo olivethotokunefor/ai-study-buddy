@@ -78,6 +78,16 @@ class StudyBuddyGroq:
         )
 
         self.vectorstore = None
+        
+        # Load existing vectorstore from persistence if available
+        if os.path.exists(PERSIST_DIR):
+            try:
+                self.vectorstore = Chroma(
+                    persist_directory=PERSIST_DIR,
+                    embedding_function=self.embeddings,
+                )
+            except:
+                self.vectorstore = None
 
     # ========================
     # Document Loading
@@ -105,20 +115,19 @@ class StudyBuddyGroq:
     # ========================
     def ingest_document(self, uploaded_file):
 
-        # Clear any existing vectorstore
+        # Delete the old vectorstore collection if it exists
         if self.vectorstore:
-            # Try to persist and close the vectorstore
             try:
-                self.vectorstore.persist()
+                # Delete all existing collections
+                self.vectorstore.delete_collection()
             except:
                 pass
             self.vectorstore = None
 
-        # Clear the persistence directory if it exists
+        # Remove persistence directory to ensure fresh start
         if os.path.exists(PERSIST_DIR):
             import shutil
             import time
-            # Try to remove the directory, with retries for Windows file locking
             max_retries = 3
             for attempt in range(max_retries):
                 try:
@@ -126,24 +135,9 @@ class StudyBuddyGroq:
                     break
                 except PermissionError:
                     if attempt < max_retries - 1:
-                        time.sleep(0.5)  # Wait a bit before retrying
+                        time.sleep(0.5)
                     else:
-                        # If still failing, try to remove individual files
-                        try:
-                            for root, dirs, files in os.walk(PERSIST_DIR, topdown=False):
-                                for file in files:
-                                    try:
-                                        os.remove(os.path.join(root, file))
-                                    except:
-                                        pass
-                                for dir_name in dirs:
-                                    try:
-                                        os.rmdir(os.path.join(root, dir_name))
-                                    except:
-                                        pass
-                            os.rmdir(PERSIST_DIR)
-                        except:
-                            pass  # If all else fails, continue anyway
+                        pass  # Continue even if deletion fails
 
         with tempfile.NamedTemporaryFile(
             delete=False,
@@ -162,6 +156,7 @@ class StudyBuddyGroq:
 
         chunks = splitter.split_documents(documents)
 
+        # Create fresh vectorstore with new documents
         self.vectorstore = Chroma.from_documents(
             documents=chunks,
             embedding=self.embeddings,
