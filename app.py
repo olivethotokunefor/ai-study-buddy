@@ -170,7 +170,7 @@ class StudyBuddyGroq:
     # ========================
     # Ask Questions
     # ========================
-    def ask_question(self, question: str):
+    def ask_question(self, question: str, conversation_history: List[dict] = None):
 
         if not self.vectorstore:
             return "Please upload a document first."
@@ -181,6 +181,15 @@ class StudyBuddyGroq:
             [doc.page_content for doc in docs]
         )
 
+        # Build conversation history context if available
+        history_context = ""
+        if conversation_history:
+            history_lines = []
+            for msg in conversation_history[-5:]:  # Include last 5 messages for context
+                history_lines.append(f"Q: {msg['question']}\nA: {msg['answer']}")
+            if history_lines:
+                history_context = "Previous conversation:\n" + "\n\n".join(history_lines) + "\n\n"
+
         prompt = PromptTemplate.from_template(
             """
 You are a helpful study assistant.
@@ -190,6 +199,7 @@ Answer ONLY using the provided context.
 If the answer is not found, say:
 "I don't have enough information in the uploaded document."
 
+{history_context}
 Context:
 {context}
 
@@ -203,6 +213,7 @@ Answer:
         chain = prompt | self.llm | StrOutputParser()
 
         answer = chain.invoke({
+            "history_context": history_context,
             "context": context,
             "question": question
         })
@@ -397,11 +408,12 @@ def main():
             st.success(msg)
 
             # Clear any cached data from previous documents
-            for key in ["quiz_questions", "quiz_answers", "show_results"]:
+            for key in ["quiz_questions", "quiz_answers", "show_results", "chat_history"]:
                 if key in st.session_state:
                     del st.session_state[key]
 
             st.session_state["buddy"] = buddy
+            st.session_state["chat_history"] = []
             
             st.info("📄 New document ingested! Previous quiz data and cached results have been cleared.")
 
@@ -419,17 +431,60 @@ def main():
 
         with tab1:
 
-            question = st.text_input("Ask a question about the document")
+            # Initialize chat history if not exists
+            if "chat_history" not in st.session_state:
+                st.session_state["chat_history"] = []
+
+            # Display chat history
+            if st.session_state["chat_history"]:
+                st.write("### 💬 Chat History")
+                for idx, msg in enumerate(st.session_state["chat_history"]):
+                    with st.container(border=True):
+                        col1, col2 = st.columns([0.08, 0.92])
+                        with col1:
+                            st.write("🙋")
+                        with col2:
+                            st.write(f"**Q:** {msg['question']}")
+                        
+                        col1, col2 = st.columns([0.08, 0.92])
+                        with col1:
+                            st.write("🤖")
+                        with col2:
+                            st.write(f"**A:** {msg['answer']}")
+                
+                st.divider()
+            
+            # New question input
+            st.write("### Ask a Question")
+            question = st.text_input(
+                "Enter your question:",
+                placeholder="Ask a follow-up question or new topic..."
+            )
 
             if st.button("Submit Question", disabled=st.session_state.get("processing_question", False)):
+                if question.strip():
+                    with st.spinner("Thinking..."):
+                        st.session_state["processing_question"] = True
+                        answer = buddy.ask_question(
+                            question,
+                            conversation_history=st.session_state["chat_history"]
+                        )
+                        st.session_state["processing_question"] = False
 
-                with st.spinner("Thinking..."):
-                    st.session_state["processing_question"] = True
-                    answer = buddy.ask_question(question)
-                    st.session_state["processing_question"] = False
+                    # Add to chat history
+                    st.session_state["chat_history"].append({
+                        "question": question,
+                        "answer": answer
+                    })
+                    st.rerun()
+                else:
+                    st.warning("Please enter a question.")
 
-                st.write("**Answer:**")
-                st.write(answer)
+            # Clear chat button
+            if st.session_state["chat_history"]:
+                if st.button("Clear Chat History"):
+                    st.session_state["chat_history"] = []
+                    st.rerun()
 
         with tab2:
 
