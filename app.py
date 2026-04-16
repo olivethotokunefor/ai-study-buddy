@@ -53,6 +53,8 @@ from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
+import chromadb
+
 
 # ========================
 # Configuration
@@ -76,6 +78,8 @@ class StudyBuddyGroq:
             max_tokens=4096,
         )
 
+        # Create a fresh in-memory Chroma client for this instance
+        self.client = chromadb.Client()
         self.vectorstore = None
 
     # ========================
@@ -104,8 +108,11 @@ class StudyBuddyGroq:
     # ========================
     def ingest_document(self, uploaded_file):
 
-        # Reset vectorstore for fresh document
-        self.vectorstore = None
+        # Delete old collection if it exists to ensure fresh data
+        try:
+            self.client.delete_collection(name="study_buddy")
+        except:
+            pass
 
         with tempfile.NamedTemporaryFile(
             delete=False,
@@ -124,10 +131,11 @@ class StudyBuddyGroq:
 
         chunks = splitter.split_documents(documents)
 
-        # Create in-memory vectorstore with new documents
+        # Create fresh in-memory vectorstore with new documents
         self.vectorstore = Chroma(
             collection_name="study_buddy",
             embedding_function=self.embeddings,
+            client=self.client,
         )
         self.vectorstore.add_documents(chunks)
 
