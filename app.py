@@ -385,6 +385,20 @@ def main():
 
     st.title("📚 Study Buddy AI")
 
+    st.write("""
+    Welcome to Study Buddy AI! This app helps you study and learn from documents by providing:
+    - **Q&A**: Ask questions about your uploaded document
+    - **Quizzes**: Generate multiple-choice quizzes to test your knowledge
+    - **Summaries**: Get concise study notes
+    - **Flashcards**: Create flashcards for quick review
+    - **Gen Z Breakdown**: Fun, simplified explanations in casual language
+
+    To get started, upload a document using the button below or the sidebar.
+    """)
+
+    if st.button("Upload Document"):
+        st.info("👈 Please use the sidebar on the left to upload and ingest your document. Select a PDF, TXT, or DOCX file and click 'Ingest Document'.")
+
     with st.sidebar:
 
         uploaded_file = st.file_uploader(
