@@ -30,9 +30,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Get API key from environment
-GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
-if not GROQ_API_KEY:
-    st.error("GROQ_API_KEY not found in .env file. Please set it.")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    st.error("OPENAI_API_KEY not found in .env file. Please set it.")
     st.stop()
 
 
@@ -48,7 +48,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 
 from langchain_community.vectorstores import Chroma
 
-from langchain_groq import ChatGroq
+from langchain_openai import ChatOpenAI
 
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -61,19 +61,19 @@ import chromadb
 # ========================
 
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-GROQ_MODEL = "openai/gpt-oss-120b"
+OPENAI_MODEL = "gpt-4"
 
 
-class StudyBuddyGroq:
+class StudyBuddyAI:
     def __init__(self):
 
         self.embeddings = HuggingFaceEmbeddings(
             model_name=EMBEDDING_MODEL
         )
 
-        self.llm = ChatGroq(
-            api_key=GROQ_API_KEY,
-            model=GROQ_MODEL,
+        self.llm = ChatOpenAI(
+            api_key=OPENAI_API_KEY,
+            model=OPENAI_MODEL,
             temperature=0.3,
             max_tokens=4096,
         )
@@ -391,7 +391,7 @@ def main():
         if uploaded_file and st.button("Ingest Document"):
 
             with st.spinner("Processing document... This may take a few minutes."):
-                buddy = StudyBuddyGroq()
+                buddy = StudyBuddyAI()
 
                 msg = buddy.ingest_document(uploaded_file)
 
