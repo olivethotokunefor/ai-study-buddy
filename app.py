@@ -30,7 +30,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Get API key from environment
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
 if not GROQ_API_KEY:
     st.error("GROQ_API_KEY not found in .env file. Please set it.")
     st.stop()
@@ -53,12 +53,13 @@ from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 
+import chromadb
+
 
 # ========================
 # Configuration
 # ========================
 
-PERSIST_DIR = "./chroma_db"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 GROQ_MODEL = "openai/gpt-oss-120b"
 
@@ -74,9 +75,11 @@ class StudyBuddyGroq:
             api_key=GROQ_API_KEY,
             model=GROQ_MODEL,
             temperature=0.3,
-            max_tokens=1024,
+            max_tokens=4096,
         )
 
+        # Create a fresh in-memory Chroma client for this instance
+        self.client = chromadb.Client()
         self.vectorstore = None
 
     # ========================
@@ -105,45 +108,11 @@ class StudyBuddyGroq:
     # ========================
     def ingest_document(self, uploaded_file):
 
-        # Clear any existing vectorstore
-        if self.vectorstore:
-            # Try to persist and close the vectorstore
-            try:
-                self.vectorstore.persist()
-            except:
-                pass
-            self.vectorstore = None
-
-        # Clear the persistence directory if it exists
-        if os.path.exists(PERSIST_DIR):
-            import shutil
-            import time
-            # Try to remove the directory, with retries for Windows file locking
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    shutil.rmtree(PERSIST_DIR)
-                    break
-                except PermissionError:
-                    if attempt < max_retries - 1:
-                        time.sleep(0.5)  # Wait a bit before retrying
-                    else:
-                        # If still failing, try to remove individual files
-                        try:
-                            for root, dirs, files in os.walk(PERSIST_DIR, topdown=False):
-                                for file in files:
-                                    try:
-                                        os.remove(os.path.join(root, file))
-                                    except:
-                                        pass
-                                for dir_name in dirs:
-                                    try:
-                                        os.rmdir(os.path.join(root, dir_name))
-                                    except:
-                                        pass
-                            os.rmdir(PERSIST_DIR)
-                        except:
-                            pass  # If all else fails, continue anyway
+        # Delete old collection if it exists to ensure fresh data
+        try:
+            self.client.delete_collection(name="study_buddy")
+        except:
+            pass
 
         with tempfile.NamedTemporaryFile(
             delete=False,
@@ -162,11 +131,13 @@ class StudyBuddyGroq:
 
         chunks = splitter.split_documents(documents)
 
-        self.vectorstore = Chroma.from_documents(
-            documents=chunks,
-            embedding=self.embeddings,
-            persist_directory=PERSIST_DIR,
+        # Create fresh in-memory vectorstore with new documents
+        self.vectorstore = Chroma(
+            collection_name="study_buddy",
+            embedding_function=self.embeddings,
+            client=self.client,
         )
+        self.vectorstore.add_documents(chunks)
 
         os.unlink(tmp_path)
 
@@ -175,7 +146,7 @@ class StudyBuddyGroq:
     # ========================
     # Ask Questions
     # ========================
-    def ask_question(self, question: str):
+    def ask_question(self, question: str, conversation_history: List[dict] = None):
 
         if not self.vectorstore:
             return "Please upload a document first."
@@ -186,6 +157,15 @@ class StudyBuddyGroq:
             [doc.page_content for doc in docs]
         )
 
+        # Build conversation history context if available
+        history_context = ""
+        if conversation_history:
+            history_lines = []
+            for msg in conversation_history[-5:]:  # Include last 5 messages for context
+                history_lines.append(f"Q: {msg['question']}\nA: {msg['answer']}")
+            if history_lines:
+                history_context = "Previous conversation:\n" + "\n\n".join(history_lines) + "\n\n"
+
         prompt = PromptTemplate.from_template(
             """
 You are a helpful study assistant.
@@ -195,6 +175,7 @@ Answer ONLY using the provided context.
 If the answer is not found, say:
 "I don't have enough information in the uploaded document."
 
+{history_context}
 Context:
 {context}
 
@@ -208,6 +189,7 @@ Answer:
         chain = prompt | self.llm | StrOutputParser()
 
         answer = chain.invoke({
+            "history_context": history_context,
             "context": context,
             "question": question
         })
@@ -416,11 +398,12 @@ def main():
             st.success(msg)
 
             # Clear any cached data from previous documents
-            for key in ["quiz_questions", "quiz_answers", "show_results"]:
+            for key in ["quiz_questions", "quiz_answers", "show_results", "chat_history"]:
                 if key in st.session_state:
                     del st.session_state[key]
 
             st.session_state["buddy"] = buddy
+            st.session_state["chat_history"] = []
             
             st.info("📄 New document ingested! Previous quiz data and cached results have been cleared.")
 
@@ -438,17 +421,60 @@ def main():
 
         with tab1:
 
-            question = st.text_input("Ask a question about the document")
+            # Initialize chat history if not exists
+            if "chat_history" not in st.session_state:
+                st.session_state["chat_history"] = []
+
+            # Display chat history
+            if st.session_state["chat_history"]:
+                st.write("### 💬 Chat History")
+                for idx, msg in enumerate(st.session_state["chat_history"]):
+                    with st.container(border=True):
+                        col1, col2 = st.columns([0.08, 0.92])
+                        with col1:
+                            st.write("🙋")
+                        with col2:
+                            st.write(f"**Q:** {msg['question']}")
+                        
+                        col1, col2 = st.columns([0.08, 0.92])
+                        with col1:
+                            st.write("🤖")
+                        with col2:
+                            st.write(f"**A:** {msg['answer']}")
+                
+                st.divider()
+            
+            # New question input
+            st.write("### Ask a Question")
+            question = st.text_input(
+                "Enter your question:",
+                placeholder="Ask a follow-up question or new topic..."
+            )
 
             if st.button("Submit Question", disabled=st.session_state.get("processing_question", False)):
+                if question.strip():
+                    with st.spinner("Thinking..."):
+                        st.session_state["processing_question"] = True
+                        answer = buddy.ask_question(
+                            question,
+                            conversation_history=st.session_state["chat_history"]
+                        )
+                        st.session_state["processing_question"] = False
 
-                with st.spinner("Thinking..."):
-                    st.session_state["processing_question"] = True
-                    answer = buddy.ask_question(question)
-                    st.session_state["processing_question"] = False
+                    # Add to chat history
+                    st.session_state["chat_history"].append({
+                        "question": question,
+                        "answer": answer
+                    })
+                    st.rerun()
+                else:
+                    st.warning("Please enter a question.")
 
-                st.write("**Answer:**")
-                st.write(answer)
+            # Clear chat button
+            if st.session_state["chat_history"]:
+                if st.button("Clear Chat History"):
+                    st.session_state["chat_history"] = []
+                    st.rerun()
 
         with tab2:
 
