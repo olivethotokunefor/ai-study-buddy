@@ -150,7 +150,7 @@ class StudyBuddyGroq:
             suffix=os.path.splitext(uploaded_file.name)[1],
         ) as tmp_file:
 
-            shutil.copyfileobj(uploaded_file, tmp_file)
+            tmp_file.write(uploaded_file.getvalue())
             tmp_path = tmp_file.name
 
         documents = self.load_document(tmp_path)
